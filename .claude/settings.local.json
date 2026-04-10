@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(expo --version)",
+      "Bash(npx expo:*)",
+      "Bash(npm --version)",
+      "Bash(npx create-expo-app@latest:*)",
+      "Bash(cp -r /Users/kavin/Developer/tennis_matcher_temp/* /Users/kavin/Developer/tennis_matcher_frontend_mobile_react_native/)",
+      "Bash(cp -r /Users/kavin/Developer/tennis_matcher_temp/.* /Users/kavin/Developer/tennis_matcher_frontend_mobile_react_native/)",
+      "Bash(rm -rf /Users/kavin/Developer/tennis_matcher_temp)",
+      "Bash(npx tsc:*)",
+      "Bash(npm install:*)"
+    ]
+  }
+}
