@@ -269,6 +269,93 @@ Drop a pin for each court returned by `useCourts`.
 
 ---
 
+## Session 6 – ngrok + Webhooks for LINE Bot (Day 6)
+
+### Goals
+- Understand what a webhook is and why it needs ngrok
+- Run a local server that receives HTTP POST from LINE
+- Expose local server to the internet with ngrok
+
+### Concepts to Teach
+
+#### What is a Webhook?
+A webhook is an HTTP endpoint that an external service calls when something happens.  
+LINE sends user messages to your server via webhook:
+```
+LINE Platform → HTTP POST → http://your-server.com/webhook
+```
+
+#### Why Do We Need ngrok?
+- Your laptop runs on `localhost:5000` — not reachable from the internet
+- ngrok creates a public URL that tunnels to your local machine
+- LINE can now reach your server while you're developing
+
+#### How ngrok Works (1 minute demo)
+```bash
+# Terminal 1: run your server
+python server.py  # runs at http://localhost:5000
+
+# Terminal 2: expose it publicly
+ngrok http 5000
+# → https://abc123.ngrok.io forwards to localhost:5000
+```
+
+#### The Full Flow
+```
+User sends message on LINE
+  → LINE servers receive it
+  → LINE calls your webhook URL (ngrok)
+  → Your Flask server receives POST at /webhook
+  → Your code parses message, queries database, builds reply
+  → Your server sends reply back to LINE Messaging API
+  → User sees reply in LINE app
+```
+
+### Hands-on Exercise
+1. Read `lineofficial/server.py` — find the Flask route that handles the webhook.
+2. Read `lineofficial/intent.py` — how does it detect sport type and province?
+3. Read `lineofficial/reply.py` — what is a Flex Message and why use it?
+4. Run the bot locally:
+   ```bash
+   cd lineofficial
+   python server.py
+   ```
+5. In another terminal, expose it:
+   ```bash
+   ngrok http 5000
+   ```
+6. Copy the ngrok URL and paste it into LINE Console → Webhook URL → Verify
+7. Test by sending a message to your LINE bot!
+
+### Key Concept
+> **Webhooks + ngrok = real-time integration**  
+> Webhooks let external services push data to you.  
+> ngrok makes your local machine reachable during development.
+
+---
+
+## Bonus Challenges (For Fast Learners)
+
+### Challenge 6 – Add More Sports
+The bot currently supports tennis and badminton. Add support for:
+- Basketball (`สนามบาสเกตบอล`)
+- Swimming (`สระว่ายน้ำ`)
+- Football (`สนามฟุตบอล`)
+
+### Challenge 7 – Persistent User State
+Store the last sport the user searched for. If they send just a province name next time, assume the same sport.
+
+### Challenge 8 – Location-based Search
+If the user sends "สนามใกล้ฉัน" (courts near me), use their LINE profile location (if they shared it) to query the database by lat/lng.
+
+### Challenge 9 – Rich Replies with Photos
+Add court photos to the Flex Message carousel. Use the `photo` field from the database.
+
+### Challenge 10 – Deploy the Bot
+Deploy the Flask server to a real host (Railway, Render, or Heroku) so you don't need ngrok in production.
+
+---
+
 ## Architecture Summary
 
 ```
