@@ -126,10 +126,19 @@ def handle_message(event):
 
 
 # -- Supabase query -------------------------------------------
+SPORT_NAME_KEYWORDS = {
+    "tennis":    ["tennis", "เทนนิส"],
+    "badminton": ["badminton", "แบดมินตัน", "แบด"],
+    "squash":    ["squash", "สควอช"],
+}
+
+
 def query_courts(province: str | None, sport: str | None) -> list:
     """
     Returns up to 5 courts filtered by province and/or sport.
-    Falls back gracefully if either filter is absent.
+
+    The `courts` table has no sport_type column, so the sport filter is
+    applied in Python by matching keywords against name_en / name_th.
     """
     q = sb.table("courts").select(
         "name_en, name_th, province, location, phone, "
@@ -139,11 +148,22 @@ def query_courts(province: str | None, sport: str | None) -> list:
     if province:
         q = q.ilike("province", f"%{province}%")
 
-    if sport:
-        q = q.in_("sport_type", [sport, "multi"])
+    # Pull more rows when filtering by sport in Python so we still
+    # have enough results after the keyword filter narrows them down.
+    fetch_limit = 50 if sport else 5
+    result = q.order("stars", desc=True).limit(fetch_limit).execute()
+    rows = result.data or []
 
-    result = q.order("stars", desc=True).limit(5).execute()
-    return result.data or []
+    if sport:
+        keywords = SPORT_NAME_KEYWORDS.get(sport, [sport])
+        rows = [r for r in rows if _name_matches_sport(r, keywords)]
+
+    return rows[:5]
+
+
+def _name_matches_sport(row: dict, keywords: list[str]) -> bool:
+    haystack = f"{row.get('name_en') or ''} {row.get('name_th') or ''}".lower()
+    return any(kw.lower() in haystack for kw in keywords)
 
 
 # -- Entry point ----------------------------------------------
