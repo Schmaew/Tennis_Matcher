@@ -39,6 +39,13 @@ yarn-error.*
 __pycache__/
 *.py[cod]
 
+# Senior's reference repo — kept local only (not licensed for redistribution).
+# Get the zip from your teacher if you don't have it.
+tennis_monkey-main/
+
+# Teacher-only docs (answers, hints) — stay on the teacher's laptop.
+TEACHING_PLAN_V2.md
+
 # typescript
 *.tsbuildinfo
 
