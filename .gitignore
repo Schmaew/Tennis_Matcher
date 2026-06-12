@@ -39,6 +39,9 @@ yarn-error.*
 __pycache__/
 *.py[cod]
 
+# Chrome user-data-dir for the Pantip bot — contains cookies/login state, never commit
+pantip_bot_profile/
+
 # Senior's reference repo — kept local only (not licensed for redistribution).
 # Get the zip from your teacher if you don't have it.
 tennis_monkey-main/
