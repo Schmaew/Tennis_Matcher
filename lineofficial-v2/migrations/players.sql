@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS players (
   nickname        TEXT,
   skill_level     TEXT CHECK (skill_level IN ('beginner', 'casual', 'intermediate', 'competitive')),
   area            TEXT,
+  line_basic_id   TEXT,
   status          TEXT NOT NULL DEFAULT 'onboarding'
                        CHECK (status IN ('onboarding', 'active', 'paused')),
   onboarding_step INT  NOT NULL DEFAULT 0,

@@ -33,7 +33,7 @@ IMAGE_FOLDER = os.path.join(os.getcwd(), "public", "comment")
 
 # -- BOT SETTINGS ---
 KEYWORD = "tenis"
-TARGET_KEYWORD = ["thai tennis", "tennis", "tennis partners"]
+TARGET_KEYWORD = ["thai tennis", "tennis", "tennis partnersg"]
 COOLDOWN_MIN = 3 
 COOLDOWN_MAX = 10
 IMAGE_FOLDER = os.path.join(os.getcwd(), "public", "comment")

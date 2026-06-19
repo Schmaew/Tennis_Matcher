@@ -34,6 +34,7 @@ from linebot.v3.messaging import (
     QuickReply,
     QuickReplyItem,
     MessageAction,
+    TextMessage,
 )
 
 
@@ -49,3 +50,23 @@ def build_quick_reply(options: list[dict]) -> QuickReply:
         for opt in options
     ]
     return QuickReply(items=items)
+
+
+def with_find_partner_button(text: str) -> TextMessage:
+    """Wrap a plain message in a TextMessage that carries a 'หาคู่ใหม่' quick-reply."""
+    return TextMessage(
+        text=text,
+        quick_reply=build_quick_reply([
+            {"label": "🎾 หาคู่ใหม่", "text": "หาคู่"},
+        ]),
+    )
+
+
+def with_skip_button(text: str, match_id: int) -> TextMessage:
+    """Wrap a 'waiting for the other side' message with an ⏭️ ข้าม button."""
+    return TextMessage(
+        text=text,
+        quick_reply=build_quick_reply([
+            {"label": "⏭️ ข้าม", "text": f"skip_{match_id}"},
+        ]),
+    )

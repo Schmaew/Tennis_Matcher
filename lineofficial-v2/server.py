@@ -53,7 +53,9 @@ import db
 import messages as msg
 import onboarding
 import matching
+import expiration
 from admin import admin_bp, admin_base_path
+from quick_reply import with_find_partner_button
 
 load_dotenv()
 
@@ -67,6 +69,7 @@ handler = WebhookHandler(os.environ["LINE_CHANNEL_SECRET"])
 line_api = MessagingApi(
     ApiClient(Configuration(access_token=os.environ["LINE_CHANNEL_ACCESS_TOKEN"]))
 )
+app.config["LINE_API"] = line_api
 
 
 # --- Webhook entry ---------------------------------------------
@@ -114,7 +117,13 @@ def on_text_message(event):
     if player["status"] == "onboarding":
         replies = onboarding.handle_onboarding_message(player, text)
         if replies:
-            return _reply(event.reply_token, replies)
+            _reply(event.reply_token, replies)
+            # If they just transitioned to 'active', see if a waiting queue
+            # member is now matchable with this fresh user.
+            refreshed = db.get_player(user_id)
+            if refreshed and refreshed.get("status") == "active":
+                matching.try_match_from_queue(line_api, refreshed)
+            return
         return _reply(event.reply_token, [onboarding.resume_onboarding(player)])
 
     # --- Quick-reply tokens (must come BEFORE plain-text commands) ---
@@ -123,6 +132,16 @@ def on_text_message(event):
     if m:
         action, match_id = m.group(1), int(m.group(2))
         replies, pushes = matching.handle_match_response(user_id, action, match_id)
+        if replies:
+            _reply(event.reply_token, replies)
+        for target_id, push_msg in pushes:
+            line_api.push_message(PushMessageRequest(to=target_id, messages=[push_msg]))
+        return
+
+    m = re.match(r"^skip_(\d+)$", text)
+    if m:
+        match_id = int(m.group(1))
+        replies, pushes = matching.handle_match_skip(user_id, match_id)
         if replies:
             _reply(event.reply_token, replies)
         for target_id, push_msg in pushes:
@@ -160,18 +179,22 @@ def _reply(reply_token: str, messages: list[TextMessage]) -> None:
 
 
 def _find_partner(reply_token: str, player: dict) -> None:
-    other = matching.find_best_partner(player)
-    if not other:
-        return _reply(reply_token, [TextMessage(text=msg.MATCH_NO_CANDIDATES)])
+    pairs = matching.initiate_matches(player)
+    if not pairs:
+        db.enqueue_waiting(player["line_user_id"])
+        return _reply(reply_token, [TextMessage(text=msg.WAITING_QUEUED)])
 
-    match_id = db.create_match(player["line_user_id"], other["line_user_id"])
+    # Reply to caller: summary + one card per candidate (LINE caps at 5 messages).
+    cards_for_caller = [matching.build_match_card(c, mid) for c, mid in pairs]
+    summary = TextMessage(text=msg.match_parallel_sent(len(pairs)))
+    _reply(reply_token, [summary, *cards_for_caller])
 
-    # Reply to caller, push to the other side.
-    _reply(reply_token, [matching.build_match_card(other, match_id)])
-    line_api.push_message(PushMessageRequest(
-        to=other["line_user_id"],
-        messages=[matching.build_match_card(player, match_id)],
-    ))
+    # Push the invite to each candidate.
+    for c, mid in pairs:
+        line_api.push_message(PushMessageRequest(
+            to=c["line_user_id"],
+            messages=[matching.build_match_card(player, mid)],
+        ))
 
 
 # --- Entry point -----------------------------------------------
@@ -181,4 +204,5 @@ if __name__ == "__main__":
     print(f"Tennis Matcher Bot v2 listening on http://localhost:{port}")
     print(f"  webhook: http://localhost:{port}/webhook")
     print(f"  admin:   http://localhost:{port}{admin_base_path()}")
+    expiration.start_expiration_thread(line_api)
     app.run(port=port, debug=False)

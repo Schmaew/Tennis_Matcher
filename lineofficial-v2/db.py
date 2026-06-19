@@ -20,6 +20,7 @@ codebase — every database call goes through this file.
 """
 
 import os
+from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -34,7 +35,7 @@ _sb: Client = create_client(
 # Same defense the senior's repo uses (db.js -> ALLOWED_PLAYER_COLUMNS).
 # Prevents a typo or malicious payload from writing to a column it shouldn't.
 _ALLOWED_PLAYER_COLUMNS = {
-    "nickname", "skill_level", "area",
+    "nickname", "skill_level", "area", "line_basic_id",
     "status", "onboarding_step",
 }
 
@@ -122,3 +123,174 @@ def respond_to_match(match_id: int, line_user_id: str, response: str) -> dict | 
 
 def mark_introduced(match_id: int) -> None:
     _sb.table("matches").update({"introduced": True}).eq("id", match_id).execute()
+
+
+def get_other_active_matches(line_user_id: str, exclude_match_id: int) -> list[dict]:
+    """
+    Matches involving `line_user_id` that aren't introduced yet and where
+    neither side has declined — i.e., still live invitations the user could
+    end up paired with. Excludes the match they just resolved.
+    """
+    res = (
+        _sb.table("matches")
+        .select("*")
+        .eq("introduced", False)
+        .neq("id", exclude_match_id)
+        .neq("player_a_response", "declined")
+        .neq("player_b_response", "declined")
+        .or_(f"player_a_id.eq.{line_user_id},player_b_id.eq.{line_user_id}")
+        .execute()
+    )
+    return res.data or []
+
+
+def cancel_match(match_id: int) -> None:
+    """Force-decline any non-declined side of a non-introduced match."""
+    m = get_match(match_id)
+    if not m or m["introduced"]:
+        return
+    updates = {}
+    if m["player_a_response"] != "declined":
+        updates["player_a_response"] = "declined"
+    if m["player_b_response"] != "declined":
+        updates["player_b_response"] = "declined"
+    if updates:
+        _sb.table("matches").update(updates).eq("id", match_id).execute()
+
+
+# ---------- Waiting queue (FIFO) ----------
+
+def enqueue_waiting(line_user_id: str) -> None:
+    """Add to queue. Silently no-op if user is already queued."""
+    try:
+        _sb.table("waiting_queue").insert({"line_user_id": line_user_id}).execute()
+    except Exception:
+        # UNIQUE constraint — already in the queue.
+        pass
+
+
+def dequeue_waiting(line_user_id: str) -> None:
+    _sb.table("waiting_queue").delete().eq("line_user_id", line_user_id).execute()
+
+
+def get_waiting_queue() -> list[dict]:
+    """Queue rows ordered oldest-first (FIFO)."""
+    res = _sb.table("waiting_queue").select("*").order("queued_at", desc=False).execute()
+    return res.data or []
+
+
+# ---------- Skip tracking (lower priority for skipped pairs) ----------
+
+def record_skip(skipper_id: str, skipped_id: str) -> None:
+    """Increment skip count for (skipper -> skipped). Insert if missing."""
+    res = (
+        _sb.table("match_skips")
+        .select("count")
+        .eq("skipper_id", skipper_id)
+        .eq("skipped_id", skipped_id)
+        .execute()
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    if res.data:
+        new_count = (res.data[0]["count"] or 0) + 1
+        (
+            _sb.table("match_skips")
+            .update({"count": new_count, "updated_at": now})
+            .eq("skipper_id", skipper_id)
+            .eq("skipped_id", skipped_id)
+            .execute()
+        )
+    else:
+        _sb.table("match_skips").insert({
+            "skipper_id": skipper_id,
+            "skipped_id": skipped_id,
+            "count": 1,
+            "updated_at": now,
+        }).execute()
+
+
+def get_skip_counts_for(skipper_id: str) -> dict[str, int]:
+    """Return {skipped_user_id: count} for everyone this user has skipped."""
+    try:
+        res = (
+            _sb.table("match_skips")
+            .select("skipped_id, count")
+            .eq("skipper_id", skipper_id)
+            .execute()
+        )
+    except Exception:
+        return {}  # table not migrated yet
+    return {r["skipped_id"]: r["count"] for r in (res.data or [])}
+
+
+def get_all_skips() -> list[dict]:
+    try:
+        res = _sb.table("match_skips").select("*").order("count", desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+
+def get_matches_for(line_user_id: str) -> list[dict]:
+    res = (
+        _sb.table("matches")
+        .select("*")
+        .or_(f"player_a_id.eq.{line_user_id},player_b_id.eq.{line_user_id}")
+        .order("suggested_at", desc=True)
+        .execute()
+    )
+    return res.data or []
+
+
+def get_skips_involving(line_user_id: str) -> tuple[list[dict], list[dict]]:
+    """Return (skips_user_made, skips_made_against_user)."""
+    try:
+        made = (
+            _sb.table("match_skips")
+            .select("*")
+            .eq("skipper_id", line_user_id)
+            .order("count", desc=True)
+            .execute()
+            .data
+            or []
+        )
+        received = (
+            _sb.table("match_skips")
+            .select("*")
+            .eq("skipped_id", line_user_id)
+            .order("count", desc=True)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return [], []
+    return made, received
+
+
+def expire_stale_matches(hours: float = 24) -> list[dict]:
+    """
+    Find non-introduced matches older than `hours` that still have at least
+    one pending response, flip those pending responses to 'declined', and
+    return the ORIGINAL (pre-update) match rows so the caller can decide
+    who to notify based on who had already accepted.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    res = (
+        _sb.table("matches")
+        .select("*")
+        .eq("introduced", False)
+        .lt("suggested_at", cutoff)
+        .or_("player_a_response.eq.pending,player_b_response.eq.pending")
+        .execute()
+    )
+    stale = res.data or []
+    for m in stale:
+        updates = {}
+        if m["player_a_response"] == "pending":
+            updates["player_a_response"] = "declined"
+        if m["player_b_response"] == "pending":
+            updates["player_b_response"] = "declined"
+        if updates:
+            _sb.table("matches").update(updates).eq("id", m["id"]).execute()
+    return stale
